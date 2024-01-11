@@ -269,6 +269,7 @@ for epoch in range(EPOCHS):
     for i, (images, targets, origins) in enumerate(distr_dl):
         images = torch.as_tensor(images).cuda()
         targets = torch.as_tensor(targets).cuda()
+        origins = torch.as_tensor(origins).cuda()
 
         loss, recons = distr_vae(
             images,
@@ -294,18 +295,18 @@ for epoch in range(EPOCHS):
                 k = NUM_IMAGES_SAVE
 
                 with torch.no_grad():
-                    codes = vae.get_codebook_indices(images[:k])
+                    codes = vae.get_codebook_indices(origins[:k])
                     hard_recons = vae.decode(codes)
 
-                images, recons, origins = map(lambda t: t[:k], (images, recons, torch.as_tensor(origins)))
-                images, recons, hard_recons, codes = map(lambda t: t.detach().cpu(), (images, recons, hard_recons, codes))
-                images, recons, hard_recons, origins = map(lambda t: make_grid(t.float(), nrow = int(sqrt(k)), normalize = True, range = (-1, 1)), (images, recons, hard_recons, origins))
+                images, origins = map(lambda t: t[:k], (images, origins))
+                images, hard_recons, origins, codes = map(lambda t: t.detach().cpu(), (images, hard_recons, origins, codes))
+                images, hard_recons, origins = map(lambda t: make_grid(t.float(), nrow = int(sqrt(k)), normalize = True, range = (-1, 1)), (images, hard_recons, origins))
 
                 logs = {
                     **logs,
                     'sample images':        wandb.Image(origins, caption = 'original images'),
                     'augmented images':     wandb.Image(images, caption = 'augmented images'),
-                    'reconstructions':      wandb.Image(recons, caption = 'reconstructions'),
+                    # 'reconstructions':      wandb.Image(soft_recons, caption = 'reconstructions'),
                     'hard reconstructions': wandb.Image(hard_recons, caption = 'hard reconstructions'),
                     'codebook_indices':     wandb.Histogram(codes),
                     'temperature':          temp

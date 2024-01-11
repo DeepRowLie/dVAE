@@ -230,9 +230,6 @@ class DiscreteVAE(nn.Module):
         if return_logits:
             return logits # return logits for getting hard image indices for DALL-E training
 
-        assert target is not None, 'target can\'t be None when calculate loss'
-        target = self.norm(target)
-
         temp = default(temp, self.temperature)
 
         one_hot = F.gumbel_softmax(logits, tau = temp, dim = 1, hard = self.straight_through)
@@ -254,6 +251,8 @@ class DiscreteVAE(nn.Module):
             return out
 
         # reconstruction loss
+        assert target is not None, 'target can\'t be None when calculate loss'
+        target = self.norm(target)
 
         recon_loss = self.loss_fn(target, out)
 

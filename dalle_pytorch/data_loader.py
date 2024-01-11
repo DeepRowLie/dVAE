@@ -260,14 +260,14 @@ class DataLoader:
 
         if augmenter is not None:
             input_img = augmenter.augment_image(
-                preprocess_image(im.copy(), normalize=False), hooks=imgaug.HooksImages(postprocessor=postprocessor)
+                preprocess_image(im.copy(), normalize=False, convert_to_rgb=True), hooks=imgaug.HooksImages(postprocessor=postprocessor)
             )
             # Normalize
             input_img = preprocess_input(input_img.astype(np.float32), mode="rl")
             input_img = input_img.reshape((1,) + input_img.shape)
 
         if postprocessor.flipped:
-            target_img = preprocess_image(im, normalize=False)
+            target_img = preprocess_image(im, normalize=False, convert_to_rgb=True)
             target_img = iaa.Fliplr(1).augment_image(target_img)
             target_img = preprocess_input(target_img.astype(np.float32), mode="rl")
             target_img = target_img.reshape((1,) + target_img.shape)

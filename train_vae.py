@@ -2,6 +2,9 @@ import math
 from math import sqrt
 import argparse
 from pathlib import Path
+import os
+
+import numpy as np
 
 # torch
 
@@ -12,7 +15,7 @@ from torch.optim.lr_scheduler import ExponentialLR
 # vision imports
 
 from torchvision import transforms as T
-from torch.utils.data import DataLoader
+# from torch.utils.data import DataLoader
 from torchvision.datasets import ImageFolder
 from torchvision.utils import make_grid, save_image
 
@@ -20,16 +23,19 @@ from torchvision.utils import make_grid, save_image
 
 from dalle_pytorch import distributed_utils
 from dalle_pytorch import DiscreteVAE
+from dalle_pytorch import DataLoader
 
 # argument parsing
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--image_folder', type = str, required = True,
+parser.add_argument('--image_folder', type = str, nargs="+", required = True,
                     help='path to your folder of images for learning the discrete VAE and its codebook')
 
 parser.add_argument('--image_size', type = int, required = False, default = 128,
                     help='image size')
+
+parser.add_argument("--n-samples", help="Max number of samples", type=int, default=-1)
 
 parser = distributed_utils.wrap_arg_parser(parser)
 
@@ -110,24 +116,56 @@ using_deepspeed = \
 
 # data
 
-ds = ImageFolder(
-    IMAGE_PATH,
-    T.Compose([
-        T.Lambda(lambda img: img.convert(IMAGE_MODE) if img.mode != IMAGE_MODE else img),
-        T.Resize(IMAGE_SIZE),
-        T.CenterCrop(IMAGE_SIZE),
-        T.ToTensor()
-    ])
-)
+# ds = ImageFolder(
+#     IMAGE_PATH,
+#     T.Compose([
+#         T.Lambda(lambda img: img.convert(IMAGE_MODE) if img.mode != IMAGE_MODE else img),
+#         T.Resize(IMAGE_SIZE),
+#         T.CenterCrop(IMAGE_SIZE),
+#         T.ToTensor()
+#     ])
+# )
+ds = None
 
-if distributed_utils.using_backend(distributed_utils.HorovodBackend):
-    data_sampler = torch.utils.data.distributed.DistributedSampler(
-        ds, num_replicas=distr_backend.get_world_size(),
-        rank=distr_backend.get_rank())
-else:
-    data_sampler = None
+# if distributed_utils.using_backend(distributed_utils.HorovodBackend):
+#     data_sampler = torch.utils.data.distributed.DistributedSampler(
+#         ds, num_replicas=distr_backend.get_world_size(),
+#         rank=distr_backend.get_rank())
+# else:
+#     data_sampler = None
+data_sampler = None
 
-dl = DataLoader(ds, BATCH_SIZE, shuffle = not data_sampler, sampler=data_sampler)
+# dl = DataLoader(ds, BATCH_SIZE, shuffle = not data_sampler, sampler=data_sampler)
+folders, images = [], []
+for folder in IMAGE_PATH:
+    if not folder.endswith("/"):
+        folder += "/"
+    folders.append(folder)
+    images_ = [folder + im for im in os.listdir(folder) if im.endswith(".jpg")]
+    print(f"{folder}: {len(images_)} images")
+    images.append(images_)
+
+
+images = np.concatenate(images)
+n_samples = len(images)
+
+if args.n_samples > 0:
+    n_samples = min(n_samples, args.n_samples)
+
+print(f"{n_samples} images")
+
+# indices for all time steps where the episode continues
+indices = np.arange(n_samples, dtype="int64")
+np.random.shuffle(indices)
+
+# split indices into minibatches. minibatchlist is a list of lists; each
+# list is the id of the observation preserved through the training
+minibatchlist = [
+    np.array(sorted(indices[start_idx : start_idx + args.batch_size]))
+    for start_idx in range(0, len(indices) - args.batch_size + 1, args.batch_size)
+]
+
+dl = DataLoader(minibatchlist, images, n_workers=2)
 
 vae_params = dict(
     image_size = IMAGE_SIZE,
@@ -148,9 +186,9 @@ if not using_deepspeed:
     vae = vae.cuda()
 
 
-assert len(ds) > 0, 'folder does not contain any images'
-if distr_backend.is_root_worker():
-    print(f'{len(ds)} images found for training')
+# assert len(ds) > 0, 'folder does not contain any images'
+# if distr_backend.is_root_worker():
+#     print(f'{len(ds)} images found for training')
 
 # optimizer
 
@@ -228,11 +266,13 @@ global_step = 0
 temp = STARTING_TEMP
 
 for epoch in range(EPOCHS):
-    for i, (images, _) in enumerate(distr_dl):
-        images = images.cuda()
+    for i, (images, targets, origins) in enumerate(distr_dl):
+        images = torch.as_tensor(images).cuda()
+        targets = torch.as_tensor(targets).cuda()
 
         loss, recons = distr_vae(
             images,
+            targets,
             return_loss = True,
             return_recons = True,
             temp = temp
@@ -257,13 +297,14 @@ for epoch in range(EPOCHS):
                     codes = vae.get_codebook_indices(images[:k])
                     hard_recons = vae.decode(codes)
 
-                images, recons = map(lambda t: t[:k], (images, recons))
+                images, recons, origins = map(lambda t: t[:k], (images, recons, torch.as_tensor(origins)))
                 images, recons, hard_recons, codes = map(lambda t: t.detach().cpu(), (images, recons, hard_recons, codes))
-                images, recons, hard_recons = map(lambda t: make_grid(t.float(), nrow = int(sqrt(k)), normalize = True, range = (-1, 1)), (images, recons, hard_recons))
+                images, recons, hard_recons, origins = map(lambda t: make_grid(t.float(), nrow = int(sqrt(k)), normalize = True, range = (-1, 1)), (images, recons, hard_recons, origins))
 
                 logs = {
                     **logs,
-                    'sample images':        wandb.Image(images, caption = 'original images'),
+                    'sample images':        wandb.Image(origins, caption = 'original images'),
+                    'augmented images':     wandb.Image(images, caption = 'augmented images'),
                     'reconstructions':      wandb.Image(recons, caption = 'reconstructions'),
                     'hard reconstructions': wandb.Image(hard_recons, caption = 'hard reconstructions'),
                     'codebook_indices':     wandb.Histogram(codes),

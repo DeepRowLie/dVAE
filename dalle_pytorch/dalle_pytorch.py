@@ -195,7 +195,7 @@ class DiscreteVAE(nn.Module):
     @torch.no_grad()
     @eval_decorator
     def get_codebook_indices(self, images):
-        logits = self(images, return_logits = True)
+        logits = self(images, None, return_logits = True)
         codebook_indices = logits.argmax(dim = 1).flatten(1)
         return codebook_indices
 
@@ -214,6 +214,7 @@ class DiscreteVAE(nn.Module):
     def forward(
         self,
         img,
+        target,
         return_loss = False,
         return_recons = False,
         return_logits = False,
@@ -228,6 +229,9 @@ class DiscreteVAE(nn.Module):
 
         if return_logits:
             return logits # return logits for getting hard image indices for DALL-E training
+
+        assert target is not None, 'target can\'t be None when calculate loss'
+        target = self.norm(target)
 
         temp = default(temp, self.temperature)
 
@@ -251,7 +255,7 @@ class DiscreteVAE(nn.Module):
 
         # reconstruction loss
 
-        recon_loss = self.loss_fn(img, out)
+        recon_loss = self.loss_fn(target, out)
 
         # kl divergence
 

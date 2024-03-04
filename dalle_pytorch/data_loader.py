@@ -4,18 +4,102 @@
 import random
 import time
 from multiprocessing import Process, Queue
+from typing import List, Union
 
 import cv2
 import imgaug
 import numpy as np
 import torchvision.transforms.functional as vision_fn
+import torch
 from imgaug import augmenters as iaa
 from imgaug.augmenters import Sometimes
 from joblib import Parallel, delayed
 from PIL import Image, ImageChops
 from six.moves import queue
 
-from ae.autoencoder import preprocess_image, preprocess_input
+from dalle_pytorch.config import INPUT_DIM, RAW_IMAGE_SHAPE, ROI
+
+
+def denormalize(x: np.ndarray) -> np.ndarray:
+    """
+    De normalize data (transform input to [0, 255])
+
+    :param x:
+    :return:
+    """
+
+    # Reorder channels
+    # B x C x H x W -> B x H x W x C
+    if len(x.shape) == 4:
+        x = np.transpose(x, (0, 2, 3, 1))
+    else:
+        x = np.transpose(x, (2, 0, 1))
+
+    x = np.clip(x, -1, 1)
+    x = (x + 1) / 2
+
+    # Clip to fix numeric imprecision (1e-09 = 0)
+    return (255 * np.clip(x, 0, 1)).astype(np.uint8)
+
+
+def preprocess_image(image: np.ndarray, convert_to_rgb: bool = False, normalize: bool = True) -> np.ndarray:
+    """
+    Crop, resize and normalize image.
+    Optionnally it also converts the image from BGR to RGB.
+
+    :param image: image (BGR or RGB)
+    :param convert_to_rgb: whether the conversion to rgb is needed or not
+    :param normalize: Whether to normalize or not
+    :return:
+    """
+    assert image.shape == RAW_IMAGE_SHAPE, f"{image.shape} != {RAW_IMAGE_SHAPE}"
+    # Crop
+    # Region of interest
+    r = ROI
+    image = image[int(r[1]) : int(r[1] + r[3]), int(r[0]) : int(r[0] + r[2])]
+    im = image
+    # Hack: resize if needed, better to change conv2d  kernel size / padding
+    if ROI[2] != INPUT_DIM[1] or ROI[3] != INPUT_DIM[0]:
+        im = cv2.resize(im, (INPUT_DIM[1], INPUT_DIM[0]), interpolation=cv2.INTER_AREA)
+    # Convert BGR to RGB
+    if convert_to_rgb:
+        im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+    # Normalize
+    if normalize:
+        im = preprocess_input(im.astype(np.float32), mode="rl")
+
+    return im
+
+
+def preprocess_input(x: np.ndarray, mode: str = "rl") -> np.ndarray:
+    """
+    Normalize input.
+
+    :param x: (RGB image with values between [0, 255])
+    :param mode: One of "tf" or "rl".
+        - rl: divide by 255 only (rescale to [0, 1])
+        - tf: will scale pixels between -1 and 1,
+            sample-wise.
+    :return: Scaled input
+    """
+    assert x.shape[-1] == 3, f"Color channel must be at the end of the tensor {x.shape}"
+    # RL mode: divide only by 255
+    x /= 255.0
+
+    if mode == "tf":
+        x -= 0.5
+        x *= 2.0
+    elif mode == "rl":
+        pass
+    else:
+        raise ValueError("Unknown mode for preprocessing")
+    # Reorder channels
+    # B x H x W x C -> B x C x H x W
+    # if len(x.shape) == 4:
+    #     x = np.transpose(x, (0, 2, 3, 1))
+    x = np.transpose(x, (2, 0, 1))
+
+    return x
 
 
 class CheckFliplrPostProcessor:

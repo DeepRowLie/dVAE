@@ -29,11 +29,10 @@ from dalle_pytorch import DataLoader
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--image_folder', type = str, nargs="+", required = True,
+parser.add_argument('--image_folder', type=str, nargs="+", required=True,
                     help='path to your folder of images for learning the discrete VAE and its codebook')
 
-parser.add_argument('--image_size', type = int, required = False, default = 128,
-                    help='image size')
+parser.add_argument('--image_size', type=int, nargs="+", required=True, help='image size, height * width')
 
 parser.add_argument("--n-samples", help="Max number of samples", type=int, default=-1)
 
@@ -209,7 +208,7 @@ if distr_backend.is_root_worker():
     )
 
     run = wandb.init(
-        project = 'dalle_train_vae',
+        project = 'dalle_dvae',
         job_type = 'train_model',
         config = model_config
     )

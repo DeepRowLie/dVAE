@@ -101,7 +101,7 @@ class ResBlock(nn.Module):
 class DiscreteVAE(nn.Module):
     def __init__(
         self,
-        image_size = 256,
+        image_size = [256, 256],
         num_tokens = 512,
         codebook_dim = 512,
         num_layers = 3,
@@ -116,8 +116,8 @@ class DiscreteVAE(nn.Module):
         normalization = ((*((0.5,) * 3), 0), (*((0.5,) * 3), 1))
     ):
         super().__init__()
-        assert log2(image_size).is_integer(), 'image size must be a power of 2'
         assert num_layers >= 1, 'number of layers must be greater than or equal to 1'
+        assert (image_size[0] % (2 ** num_layers)) == 0 and (image_size[1] % (2 ** num_layers)) == 0, 'image size must meet the requirements'
         has_resblocks = num_resnet_blocks > 0
 
         self.channels = channels
@@ -205,9 +205,9 @@ class DiscreteVAE(nn.Module):
     ):
         image_embeds = self.codebook(img_seq)
         b, n, d = image_embeds.shape
-        h = w = int(sqrt(n))
+        h, w = (size // (2 ** self.num_layers) for size in self.image_size)
 
-        image_embeds = rearrange(image_embeds, 'b (h w) d -> b d h w', h = h, w = w)
+        image_embeds = rearrange(image_embeds, 'b (h w) d -> b d h w', h=h, w=w)
         images = self.decoder(image_embeds)
         return images
 
@@ -221,7 +221,7 @@ class DiscreteVAE(nn.Module):
         temp = None
     ):
         device, num_tokens, image_size, kl_div_loss_weight = img.device, self.num_tokens, self.image_size, self.kl_div_loss_weight
-        assert img.shape[-1] == image_size and img.shape[-2] == image_size, f'input must have the correct image size {image_size}'
+        assert img.shape[-1] == image_size[-1] and img.shape[-2] == image_size[-2], f'input must have the correct image size {image_size}'
 
         img = self.norm(img)
 

@@ -1,14 +1,14 @@
 import os
 from typing import Any, Dict, Optional, Tuple
 
-# import cv2
+import cv2
 import gym
 import numpy as np
 import torch as th
 from pathlib import Path
 
 from dalle_pytorch import DiscreteVAE
-from dalle_pytorch.data_loader import preprocess_image
+from dalle_pytorch.data_loader import preprocess_image, denormalize
 
 
 class AutoencoderWrapper(gym.Wrapper):
@@ -39,23 +39,31 @@ class AutoencoderWrapper(gym.Wrapper):
         obs_shape_dim = (self.ae.image_size[0] // (2 ** self.ae.num_layers)) * (self.ae.image_size[1] // (2 ** self.ae.num_layers))
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(obs_shape_dim + 1,), dtype=np.float32)
 
+        # self.n_debug = 0
+
     def reset(self) -> np.ndarray:
-        # Important: Convert to BGR to match OpenCV convention
         obs = self.env.reset()
-        obs = preprocess_image(obs, convert_to_rgb=True)
-        encoded_image = self.ae.get_codebook_indices(th.as_tensor(obs).unsqueeze(0).cuda())
+        # cv2.imwrite(r'/home/hero/Projects/DRL/donkeycar/scratch/tmp/debug_data/' + f"{self.n_debug}.jpg", obs[:, :, ::-1])
+        # self.n_debug += 1
+        obs = preprocess_image(obs)[None]
+        with th.no_grad():
+            encoded_image = self.ae.get_codebook_indices(th.as_tensor(obs).cuda()) / (self.ae.num_tokens - 1)
         new_obs = np.concatenate([encoded_image.cpu().numpy().flatten(), [0.0]])
         return new_obs
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, Dict[str, Any]]:
         obs, reward, done, infos = self.env.step(action)
-        # encoded_img = self.ae.encode_from_raw_image(obs[:, :, ::-1])
-        # reconstructed_img = self.ae.decode(encoded_img)[0]
+        # cv2.imwrite(r'/home/hero/Projects/DRL/donkeycar/scratch/tmp/debug_data/' + f"{self.n_debug}.jpg", obs[:, :, ::-1])
+        # self.n_debug += 1
         # cv2.imshow("Original", obs[:, :, ::-1])
-        # cv2.imshow("Reconstruction", reconstructed_img)
+        obs = preprocess_image(obs)[None]
+        # cv2.imshow("Dummy", np.transpose(obs, (1, 2, 0))[:, :, ::-1])
+        with th.no_grad():
+            encoded_image = self.ae.get_codebook_indices(th.as_tensor(obs).cuda()) / (self.ae.num_tokens - 1)
+        # reconstructed_image = self.ae.decode(encoded_image).detach().cpu().numpy()
+        # reconstructed_image = denormalize(reconstructed_image)[0][:, :, ::-1]
+        # cv2.imshow("Reconstruction", reconstructed_image)
         # cv2.waitKey(0)
-        obs = preprocess_image(obs, convert_to_rgb=True)
-        encoded_image = self.ae.get_codebook_indices(th.as_tensor(obs).unsqueeze(0).cuda())
         speed = infos["speed"]
         new_obs = np.concatenate([encoded_image.cpu().numpy().flatten(), [speed]])
         return new_obs, reward, done, infos
